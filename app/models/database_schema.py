@@ -7,9 +7,8 @@ from typing import List, Optional
 
 from sqlalchemy import (
     Column, Integer, String, Boolean, DateTime, Date, 
-    ForeignKey, Numeric, Text, Index, UniqueConstraint
+    ForeignKey, Numeric, Text, Index, UniqueConstraint, JSON, Uuid
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY, ENUM
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -18,11 +17,9 @@ from sqlalchemy.sql import func
 # ==================================================================================
 
 class Base(DeclarativeBase):
-    """Base class for all models with common audit fields."""
     pass
 
 class TimestampMixin:
-    """Mixin to add creation and update timestamps to all tables."""
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -72,15 +69,13 @@ class ModelType(str, Enum):
 class User(Base, TimestampMixin):
     __tablename__ = "users"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     
-    # User Preferences
-    preferences: Mapped[dict] = mapped_column(JSONB, server_default='{}')
+    preferences: Mapped[dict] = mapped_column(JSON, default=dict)
 
-    # Relationships
     accounts: Mapped[List["FinancialAccount"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     scenarios: Mapped[List["Scenario"]] = relationship(back_populates="user")
     alerts: Mapped[List["FinancialAdvice"]] = relationship(back_populates="user")
@@ -93,7 +88,7 @@ class User(Base, TimestampMixin):
 class FinancialAccount(Base, TimestampMixin):
     __tablename__ = "financial_accounts"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     
     institution_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -103,7 +98,7 @@ class FinancialAccount(Base, TimestampMixin):
     current_balance: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, default=0)
     currency: Mapped[str] = mapped_column(String(3), default="USD")
     
-    provider_metadata: Mapped[dict] = mapped_column(JSONB, server_default='{}')
+    provider_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
     last_synced_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="accounts")
@@ -116,12 +111,11 @@ class FinancialAccount(Base, TimestampMixin):
 class Transaction(Base, TimestampMixin):
     __tablename__ = "transactions"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("financial_accounts.id"), nullable=False, index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     
-    # Core Data
-    amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, comment="Absolute value usually, direction handles sign logic in app")
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
     direction: Mapped[TransactionDirection] = mapped_column(String(20), nullable=False, default=TransactionDirection.EXPENSE)
     
     currency: Mapped[str] = mapped_column(String(3), default="USD")
@@ -133,15 +127,14 @@ class Transaction(Base, TimestampMixin):
 
     category_primary: Mapped[Optional[str]] = mapped_column(String(100), index=True)
     category_detailed: Mapped[Optional[str]] = mapped_column(String(100))
-    tags: Mapped[list] = mapped_column(ARRAY(String), server_default='{}')
+    tags: Mapped[list] = mapped_column(JSON, default=list) # SQLite doesn't have ARRAY
     
-    # Enrichment
     is_recurring: Mapped[bool] = mapped_column(Boolean, default=False)
-    recurring_frequency: Mapped[Optional[str]] = mapped_column(String(50), comment="e.g. MONTHLY, WEEKLY")
+    recurring_frequency: Mapped[Optional[str]] = mapped_column(String(50))
     
     is_excluded_from_forecast: Mapped[bool] = mapped_column(Boolean, default=False)
     
-    raw_import_data: Mapped[dict] = mapped_column(JSONB, server_default='{}')
+    raw_import_data: Mapped[dict] = mapped_column(JSON, default=dict)
 
     account: Mapped["FinancialAccount"] = relationship(back_populates="transactions")
 
@@ -150,26 +143,20 @@ class Transaction(Base, TimestampMixin):
     )
 
 
-# ==================================================================================
-# Forecasting & ML Infrastructure
-# ==================================================================================
-
 class MLModel(Base, TimestampMixin):
-    """Registry of ML models."""
     __tablename__ = "ml_models"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     version: Mapped[str] = mapped_column(String(50), nullable=False)
     model_type: Mapped[ModelType] = mapped_column(String(50), nullable=False)
     is_active_production: Mapped[bool] = mapped_column(Boolean, default=False)
     
-    parameters: Mapped[dict] = mapped_column(JSONB)
-    training_metrics: Mapped[dict] = mapped_column(JSONB)
+    parameters: Mapped[dict] = mapped_column(JSON, default=dict)
+    training_metrics: Mapped[dict] = mapped_column(JSON, default=dict)
     
-    # Lineage & Reproducibility
-    training_data_hash: Mapped[Optional[str]] = mapped_column(String(255), comment="Hash of the dataset used for training")
-    code_commit_sha: Mapped[Optional[str]] = mapped_column(String(40), comment="Git commit SHA of model code")
+    training_data_hash: Mapped[Optional[str]] = mapped_column(String(255))
+    code_commit_sha: Mapped[Optional[str]] = mapped_column(String(40))
     artifact_path: Mapped[str] = mapped_column(String(500))
 
     __table_args__ = (
@@ -179,7 +166,7 @@ class MLModel(Base, TimestampMixin):
 class CashflowForecast(Base, TimestampMixin):
     __tablename__ = "cashflow_forecasts"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     
     generated_by_model_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("ml_models.id"), nullable=True)
@@ -197,14 +184,11 @@ class CashflowForecast(Base, TimestampMixin):
         Index('idx_forecast_user_scenario_date', 'user_id', 'scenario_id', 'forecast_date'),
     )
 
-# ==================================================================================
-# Simulation & Strategy
-# ==================================================================================
 
 class Scenario(Base, TimestampMixin):
     __tablename__ = "scenarios"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -218,7 +202,7 @@ class Scenario(Base, TimestampMixin):
 class ScenarioModification(Base, TimestampMixin):
     __tablename__ = "scenario_modifications"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     scenario_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scenarios.id"), nullable=False)
     
     name: Mapped[str] = mapped_column(String(255))
@@ -229,40 +213,31 @@ class ScenarioModification(Base, TimestampMixin):
     end_date: Mapped[Optional[datetime.date]] = mapped_column(Date, nullable=True)
     
     recurrence_rule: Mapped[Optional[str]] = mapped_column(String(100))
-    parameters: Mapped[dict] = mapped_column(JSONB, server_default='{}')
+    parameters: Mapped[dict] = mapped_column(JSON, default=dict)
 
     scenario: Mapped["Scenario"] = relationship(back_populates="modifications")
 
-# ==================================================================================
-# Actionable Intelligence & Risk
-# ==================================================================================
 
 class RiskProfile(Base, TimestampMixin):
-    """
-    Periodic assessment of the user's financial health.
-    """
     __tablename__ = "risk_profiles"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     generated_by_model_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("ml_models.id"), nullable=True)
 
     assessment_date: Mapped[datetime.date] = mapped_column(Date, nullable=False, default=datetime.date.today)
-    overall_risk_score: Mapped[int] = mapped_column(Integer, comment="0-100 Score")
+    overall_risk_score: Mapped[int] = mapped_column(Integer)
     risk_level: Mapped[RiskScoreLevel] = mapped_column(String(50))
     
-    risk_factors: Mapped[dict] = mapped_column(JSONB, comment="Detailed breakdown e.g. {'liquidity': 'low', 'leverage': 'high'}")
+    risk_factors: Mapped[dict] = mapped_column(JSON, default=dict)
 
     user: Mapped["User"] = relationship(back_populates="risk_profiles")
 
 
 class FinancialAdvice(Base, TimestampMixin):
-    """
-    Immutable Advice Log.
-    """
     __tablename__ = "financial_advice"
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     generated_by_model_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("ml_models.id"), nullable=True)
 
@@ -272,13 +247,12 @@ class FinancialAdvice(Base, TimestampMixin):
     risk_level: Mapped[str] = mapped_column(String(50), default="medium")
     category: Mapped[str] = mapped_column(String(100))
     
-    # User Interaction Wrappers
     is_dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
     dismissed_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True))
     
     is_pinned: Mapped[bool] = mapped_column(Boolean, default=False)
     viewed_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True))
 
-    related_transaction_ids: Mapped[list] = mapped_column(ARRAY(UUID), nullable=True)
+    related_transaction_ids: Mapped[list] = mapped_column(JSON, default=list)
 
     user: Mapped["User"] = relationship(back_populates="alerts")
