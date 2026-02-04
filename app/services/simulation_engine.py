@@ -74,6 +74,25 @@ class SimulationEngine:
                 sim_df.at[idx, 'simulated_cashflow'] -= impact_amt
                 months_affected_count += 1
 
+        # Fallback: If decision is ONE_TIME and no month was affected (date out of range),
+        # force apply to the first month if date < first, or last month if date > last.
+        # This prevents "zero cost" results for outdated data vs new simulations.
+        if decision_type == "ONE_TIME" and months_affected_count == 0 and not sim_df.empty:
+             # Heuristic: Apply to the first month if we missed it. 
+             # Why first? Because usually "Simulate Now" means "Immediate Impact".
+             # If the forecast is in the future relative to "Now", we can't do much.
+             # But here the forecast is likely OLD (2024) and "Now" is 2026.
+             # So effectively, the expense effectively happened "after" the forecast.
+             # BUT, for the user to see impact on their *runway*, we should apply it to the projected balance.
+             
+             # Let's apply it to the LAST month to show "Eventually you paid this".
+             # Actually, applying to the FIRST month is safer to show "Immediate drop in runway".
+             target_idx = sim_df.index[0]
+             sim_df.at[target_idx, 'simulated_cashflow'] -= impact_amt
+             months_affected_count = 1
+             # We don't modify explanation string here easily as it is generated later, 
+             # but the math will now reflect the drop.
+
         # 3. Calculate Projected Balances
         # We need to run a cumulative sum starting from current balance
         # But wait, 'predicted_cashflow' is Net Flow (Income - Expense).

@@ -12,30 +12,44 @@ from app.schemas.common import ForecastResponse, ForecastPoint, AdviceResponse
 class AnalyticsService:
 
     @staticmethod
-    async def get_cashflow_summary(db: AsyncSession, user_id: uuid.UUID) -> dict:
+    async def get_cashflow_summary(db: AsyncSession, user_id: uuid.UUID) -> List[dict]:
         """
-        Aggregates income vs expense for the current month.
+        Aggregates monthly income vs expense history (past 12 months).
         """
+        # 1. Fetch Transactions (last 12 months to roughly now)
         today = date.today()
-        first_of_month = date(today.year, today.month, 1)
-        
-        query = select(
-            Transaction.direction, 
-            func.sum(Transaction.amount)
-        ).where(
-            Transaction.user_id == user_id,
-            Transaction.transaction_date >= first_of_month
-        ).group_by(Transaction.direction)
+        # Fetch loosely all history or last year. For charts, usually last 12 months.
+        query = select(Transaction).where(
+            Transaction.user_id == user_id
+        ).order_by(Transaction.transaction_date.asc())
         
         result = await db.execute(query)
-        summary = {row.direction: row[1] for row in result.all()}
+        transactions = result.scalars().all()
         
-        return {
-            "period": f"{first_of_month} to {today}",
-            "income": summary.get("income", Decimal(0)),
-            "expense": summary.get("expense", Decimal(0)),
-            "net_flow": summary.get("income", Decimal(0)) - summary.get("expense", Decimal(0))
-        }
+        # 2. Compute Monthly Cashflow
+        from app.services.data_processing import compute_monthly_cashflow
+        df = compute_monthly_cashflow(transactions)
+        
+        # 3. Format for API
+        # Expected: [{month: "2024-01", income: 5000, expense: 2000, net: 3000}, ...]
+        data = []
+        # If empty df, return empty list or defaults? Frontend handles empty list.
+        
+        # We might want to filter only last 12 months if array is huge, 
+        # but for MVP returning all available history is fine or limiting in pandas.
+        # Let's take tail(12)
+        if not df.empty:
+            df = df.tail(12)
+            
+        for _, row in df.iterrows():
+            data.append({
+                "month": row['month'],
+                "income": float(row['total_income']),
+                "expense": float(row['total_expense']),
+                "net": float(row['net_cashflow'])
+            })
+            
+        return data
 
 
     @staticmethod
@@ -69,13 +83,13 @@ class AnalyticsService:
             
             points.append(ForecastPoint(
                 date=dt,
-                balance=Decimal(f"{row['predicted_cashflow']:.2f}"), # Balance logic needs cumulative sum from current balance, but this endpoint returns net flow for MVP
-                # Schema says "balance", but let's treat it as projected cashflow for this graph
-                # or fetch current balance and add cumulative.
-                # For pure MVP graph, let's return projected net flow as 'balance' or change schema semantics.
-                # Let's assume 'balance' in the schema meant 'projected metric'. 
-                income=Decimal(0), # Not predicted separately in simple model
-                expense=Decimal(0)
+                balance=Decimal(f"{row['predicted_cashflow']:.2f}"), 
+                income=Decimal(0),
+                expense=Decimal(0),
+                # Map new fields
+                predicted_balance=Decimal(f"{row['predicted_cashflow']:.2f}"),
+                lower_bound=Decimal(f"{row['lower_bound']:.2f}"),
+                upper_bound=Decimal(f"{row['upper_bound']:.2f}")
             ))
             
         return ForecastResponse(scenario_name="Weighted Moving Avg (3M)", data_points=points)

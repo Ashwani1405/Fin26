@@ -43,6 +43,10 @@ class ForecastPoint(BaseModel):
     balance: Decimal
     income: Decimal = Decimal(0)
     expense: Decimal = Decimal(0)
+    # Added for frontend chart support
+    predicted_balance: Decimal = Decimal(0)
+    lower_bound: Decimal = Decimal(0)
+    upper_bound: Decimal = Decimal(0)
 
 class ForecastResponse(BaseModel):
     scenario_name: str

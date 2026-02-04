@@ -8,7 +8,7 @@ from app.models.database_schema import User, FinancialAccount, AccountType
 async def seed():
     async with AsyncSessionLocal() as session:
         # Create Dummy User
-        user_id = uuid.uuid4()
+        user_id = uuid.UUID("550e8400-e29b-41d4-a716-446655440000")
         user = User(
             id=user_id,
             email=f"dummy_{user_id}@example.com",
@@ -16,7 +16,7 @@ async def seed():
         )
         
         # Create Dummy Account
-        account_id = uuid.uuid4()
+        account_id = uuid.UUID("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")
         account = FinancialAccount(
             id=account_id,
             user_id=user_id,

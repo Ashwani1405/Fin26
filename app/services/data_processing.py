@@ -26,13 +26,27 @@ def compute_monthly_cashflow(transactions: List[Transaction]) -> pd.DataFrame:
         # For now, let's ignore TRANSFER type for the Net, or treat based on sign if provided.
         # But our Schema implies direction explicitly.
         
-        if t.direction == TransactionDirection.TRANSFER:
+        # Normalize direction
+        # Handle cases where it is an Enum object, a string, or a string repo of Enum (TransactionDirection.INCOME)
+        raw_dir = t.direction
+        if hasattr(raw_dir, 'value'):
+            d_val = raw_dir.value
+        else:
+            d_val = str(raw_dir)
+            # Fallback if it stringified as Class.MEMBER
+            if "." in d_val: 
+                d_val = d_val.split(".")[-1]
+        
+        d_val = d_val.lower()
+        
+        # Filter transfers
+        if d_val == "transfer":
             continue
             
         data.append({
             "date": t.transaction_date,
-            "amount": float(t.amount), # Pandas handles floats better for agg, convert back if needed
-            "direction": t.direction
+            "amount": float(t.amount), 
+            "direction": d_val 
         })
     
     if not data:
@@ -45,9 +59,9 @@ def compute_monthly_cashflow(transactions: List[Transaction]) -> pd.DataFrame:
     df['month'] = df['date'].dt.to_period('M').astype(str) # Format: YYYY-MM
     
     # 3. Vectorized Calculation
-    # Masks
-    is_income = df['direction'] == TransactionDirection.INCOME
-    is_expense = df['direction'] == TransactionDirection.EXPENSE
+    # Masks (compare against string values)
+    is_income = df['direction'] == "income"
+    is_expense = df['direction'] == "expense"
     
     # We aggregate by Month
     # We can do this by creating separate columns first or grouping
@@ -64,6 +78,10 @@ def compute_monthly_cashflow(transactions: List[Transaction]) -> pd.DataFrame:
     })
     
     grouped['net_cashflow'] = grouped['total_income'] - grouped['total_expense']
+    
+    # DEBUG: Print final df
+    print("DEBUG: Final Cashflow DF:\n", grouped)
+    print("DEBUG: Sample direction:", df['direction'].unique() if not df.empty else "Empty")
     
     return grouped.sort_values('month')
 
